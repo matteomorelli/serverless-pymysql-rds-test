@@ -1,0 +1,138 @@
+
+frameworkVersion: ">=1.3.0 <2.0.0"
+
+service: serverless-pymysql-rds-test # NOTE: update this with your service name
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+
+provider:
+  name: aws
+  runtime: python2.7
+  stage: ${opt:stage, 'dev'} # If no --stage flag is provided, dev is used
+  region: us-east-1
+  profile: serverless # The default profile to use with this service
+  memorySize: 128 # Overwrite the default memory size. Default is 1024
+
+  iamRoleStatements:
+    # AWSLambdaVPCAccessExecutionRole
+    - Effect: Allow
+      Action:
+        - "ec2:CreateNetworkInterface"
+        - "ec2:DescribeNetworkInterfaces"
+        - "ec2:DeleteNetworkInterface"
+      Resource:
+        - "*"
+  environment:
+    mysqlEndpoint:
+      "Fn::GetAtt": [ServerlessRDSRDSCluster, Endpoint.Address]
+    mysqlPort:
+      "Fn::GetAtt": [ServerlessRDSRDSCluster, Endpoint.Port]
+    mysqlDatabase: "serverlesspymysqlrds"
+    mysqlUser: "master"
+    mysqlPassword: "master1234"
+
+  vpc:
+    securityGroupIds:
+      - "Fn::GetAtt": ServerlessRDSSecurityGroup.GroupId
+    subnetIds:
+      - Ref: ServerlessRDSSubnetA
+      - Ref: ServerlessRDSSubnetB
+      - Ref: ServerlessRDSSubnetC
+
+package:
+  exclude:
+    - node_modules/**
+
+functions:
+  rds_version:
+    handler: handler.rds_version
+    timeout: 15
+    events:
+      - http:
+          path: /
+          method: get
+  rds_connect:
+    handler: handler.rds_connect
+    timeout: 15
+    events: 
+      - http:
+          path: /query
+          method: get
+
+resources:
+  Resources:
+    ServerlessRDSVPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: "10.0.0.0/16"
+    ServerlessRDSSubnetA:
+      DependsOn: ServerlessRDSVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: ServerlessRDSVPC
+        AvailabilityZone: ${self:provider.region}a
+        CidrBlock: "10.0.0.0/24"
+    ServerlessRDSSubnetB:
+      DependsOn: ServerlessRDSVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: ServerlessRDSVPC
+        AvailabilityZone: ${self:provider.region}b
+        CidrBlock: "10.0.1.0/24"
+    ServerlessRDSSubnetC:
+      DependsOn: ServerlessRDSVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: 
+          Ref: ServerlessRDSVPC
+        AvailabilityZone: ${self:provider.region}c
+        CidrBlock: "10.0.2.0/24"
+    ServerlessRDSSecurityGroup:
+      DependsOn: ServerlessRDSVPC
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: SecurityGroup for Serverless function service serverless-pymysql-rds-test
+        VpcId: 
+          Ref: ServerlessRDSVPC
+    ServerlessRDSStorageSecurityGroup:
+      DependsOn: ServerlessRDSVPC
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Ingress for RDS Instance service serverless-pymysql-rds-test
+        VpcId:
+          Ref: ServerlessRDSVPC
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: '3306'
+            ToPort: '3306'
+            SourceSecurityGroupId:
+              Ref: ServerlessRDSSecurityGroup
+    ServerlessRDSSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties: 
+        DBSubnetGroupDescription: "RDS Subnet Group"
+        SubnetIds:
+          - Ref: ServerlessRDSSubnetA
+          - Ref: ServerlessRDSSubnetB
+          - Ref: ServerlessRDSSubnetC
+    ServerlessRDSRDSCluster:
+      DependsOn: ServerlessRDSStorageSecurityGroup
+      Type: AWS::RDS::DBInstance
+      Properties:
+        Engine: MySQL
+        DBName: serverlesspymysqlrds
+        MasterUsername: master
+        MasterUserPassword: master1234
+        DBInstanceClass: db.t2.micro
+        AllocatedStorage: 20
+        VPCSecurityGroups:
+          - "Fn::GetAtt": ServerlessRDSStorageSecurityGroup.GroupId
+        DBSubnetGroupName:
+          Ref: ServerlessRDSSubnetGroup
